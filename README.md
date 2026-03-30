@@ -14,10 +14,10 @@ code --install-extension ms-python.vscode-pylance
 code --install-extension qwtel.sqlite-viewer
 code --install-extension charliermarsh.ruff
 
-# 🛡️ Wealth Engine (Elliot.OS) - Plataforma Financeira Criptografada
+# 🛡️ Wealth Engine - Plataforma Financeira Criptografada
 
 ## 🔭 Visão Geral
-O **Wealth Engine** é uma plataforma de gestão de patrimônio (*Wealth Management*) nativa para desktop, construída em Python. Diferente de aplicações web baseadas em nuvem, este software foi arquitetado sob a premissa do **Data Locality** e do **Zero-Knowledge**. Seus dados financeiros não transitam por APIs de terceiros e não são armazenados em texto plano. A plataforma integra um motor de ingestão de dados (ETL), um banco de dados relacional cifrado e visualização de dados em alta performance estritamente na memória RAM.
+O **Wealth Engine** é uma plataforma de gestão de patrimônio nativa para desktop, construída em Python. Diferente de aplicações web baseadas em nuvem, este software foi arquitetado sob a premissa do **Data Locality** e do **Zero-Knowledge**. Seus dados financeiros não transitam por APIs de terceiros e não são armazenados em texto plano. A plataforma integra um motor de ingestão de dados (ETL), um banco de dados relacional cifrado e visualização de dados em alta performance estritamente na memória RAM.
 
 ## ⚙️ Arquitetura e Decisões de Engenharia
 
