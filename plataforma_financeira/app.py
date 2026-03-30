@@ -2,7 +2,12 @@
 import customtkinter as ctk
 import sqlcipher3.dbapi2 as sqlite3
 import os
+import pandas as pd
+import plotly.express as px
+import io
+from PIL import Image
 from database_core import init_db
+
 
 # Configuração global de design minimalista
 ctk.set_appearance_mode("dark")
@@ -11,7 +16,7 @@ ctk.set_default_color_theme("dark-blue")
 class PlataformaFinanceira(ctk.CTk):
     def __init__(self):
         super().__init__()
-        self.title("Wealth Engine - Elliot")
+        self.title("Wealth Engine - Plataforma Financeira Pessoal")
         self.geometry("400x300")
         self.resizable(False, False)
         
@@ -75,7 +80,7 @@ class PlataformaFinanceira(ctk.CTk):
         # 1. Transição de Estado da Janela
         self.frame_login.destroy() # Remove a tela de login
         self.geometry("1100x700") # Redimensiona para o dashboard
-        self.title("Wealth Engine - Command Center")
+        self.title("Wealth.Core - Command Center")
         self.resizable(True, True)
         # 2. Configuração do Motor de Geometria (Master Grid)
         self.grid_rowconfigure(0, weight=1)    # Linha única expande 100% da altura
@@ -86,7 +91,7 @@ class PlataformaFinanceira(ctk.CTk):
         self.sidebar_frame.grid(row=0, column=0, sticky="nsew")
         self.sidebar_frame.grid_rowconfigure(5, weight=1) # Espaçador invisível empurra o fundo
 
-        self.logo_label = ctk.CTkLabel(self.sidebar_frame, text="Elliot.OS", font=ctk.CTkFont(size=22, weight="bold"))
+        self.logo_label = ctk.CTkLabel(self.sidebar_frame, text="Wealth.Core", font=ctk.CTkFont(size=22, weight="bold"))
         self.logo_label.grid(row=0, column=0, padx=20, pady=(20, 30))
 
         # Botões de Navegação com injeção de função Lambda para Roteamento
@@ -113,64 +118,96 @@ class PlataformaFinanceira(ctk.CTk):
             
         # Motor de Renderização Condicional
       # Motor de Renderização Condicional
+     # Motor de Renderização Condicional
         if tela_destino == "dash":
+            # 1. TÍTULO
             titulo = ctk.CTkLabel(self.main_frame, text="Visão Geral Financeira", font=ctk.CTkFont(size=24, weight="bold"))
             titulo.pack(pady=20, padx=20, anchor="w")
             
-            # --- 1. Camada de Acesso a Dados (Consultando o que o ETL inseriu) ---
+            # 2. EXTRAÇÃO DE DADOS BÁSICOS (CARDS)
             try:
                 cursor = self.db_conn.cursor()
-                
-                # Query 1: Resumo de Contas
                 cursor.execute("SELECT nome, tipo FROM tb_contas")
                 contas_db = cursor.fetchall()
                 
-                # Query 2: Total de Transações Processadas (Prova de Carga)
                 cursor.execute("SELECT COUNT(*), SUM(valor) FROM tb_transacoes")
                 stats_transacoes = cursor.fetchone()
-                
             except Exception as e:
-                erro_label = ctk.CTkLabel(self.main_frame, text=f"Erro de DB: {e}", text_color="red")
-                erro_label.pack()
+                ctk.CTkLabel(self.main_frame, text=f"Erro de DB: {e}", text_color="red").pack()
                 return
 
-            # --- 2. Camada de Apresentação (Renderizando na Interface) ---
-            # Container (Grid interno) para organizar os cartões lado a lado
+            # 3. RENDERIZAÇÃO DOS CARDS
             painel_cards = ctk.CTkFrame(self.main_frame, fg_color="transparent")
             painel_cards.pack(fill="x", padx=20, pady=10)
-            painel_cards.grid_columnconfigure((0, 1), weight=1) # Divide em duas colunas iguais
+            painel_cards.grid_columnconfigure((0, 1), weight=1)
 
-            # Card 1: Suas Contas
             card_contas = ctk.CTkFrame(painel_cards, corner_radius=10)
             card_contas.grid(row=0, column=0, padx=10, sticky="nsew")
             ctk.CTkLabel(card_contas, text="🏦 Suas Contas", font=ctk.CTkFont(size=16, weight="bold")).pack(pady=10)
-            
             if contas_db:
                 for nome, tipo in contas_db:
                     ctk.CTkLabel(card_contas, text=f"{nome} ({tipo})").pack(pady=2)
             else:
                 ctk.CTkLabel(card_contas, text="Nenhuma conta cadastrada.").pack(pady=2)
 
-            # Card 2: Status do CSV (Extrato)
             card_extrato = ctk.CTkFrame(painel_cards, corner_radius=10)
             card_extrato.grid(row=0, column=1, padx=10, sticky="nsew")
             ctk.CTkLabel(card_extrato, text="📊 Dados Ingeridos (ETL)", font=ctk.CTkFont(size=16, weight="bold")).pack(pady=10)
-            
             qtd_transacoes = stats_transacoes[0] if stats_transacoes else 0
             volume_movimentado = stats_transacoes[1] if stats_transacoes and stats_transacoes[1] else 0.0
-            
             ctk.CTkLabel(card_extrato, text=f"Transações no Banco: {qtd_transacoes}").pack(pady=2)
             ctk.CTkLabel(card_extrato, text=f"Volume Bruto: R$ {volume_movimentado:.2f}").pack(pady=2)
+
+            # 4. MOTOR DO GRÁFICO (LAZY LOADING)
+            self.frame_grafico = ctk.CTkFrame(self.main_frame, fg_color="transparent")
+            self.grafico_gerado = False
+
+            def toggle_grafico():
+                if not self.grafico_gerado:
+                    btn_toggle.configure(text="Carregando Motor Gráfico...", state="disabled")
+                    self.update()
+                    
+                    try:
+                        query = """
+                        SELECT c.tipo_fluxo, SUM(t.valor) as total
+                        FROM tb_transacoes t JOIN tb_categorias c ON t.categoria_id = c.id
+                        GROUP BY c.tipo_fluxo
+                        """
+                        cursor_grafico = self.db_conn.cursor()
+                        cursor_grafico.execute(query)
+                        colunas = [desc[0] for desc in cursor_grafico.description]
+                        df_grafico = pd.DataFrame(cursor_grafico.fetchall(), columns=colunas)
+
+                        if not df_grafico.empty:
+                            fig = px.bar(df_grafico, x='tipo_fluxo', y='total', color='tipo_fluxo', title="Fluxo de Caixa Consolidado", color_discrete_map={'RECEITA': '#2ecc71', 'DESPESA': '#e74c3c'}, template="plotly_dark")
+                            fig.update_layout(margin=dict(l=20, r=20, t=40, b=20), paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", height=300)
+                            img_bytes = fig.to_image(format="png", width=600, height=300)
+                            imagem_pil = Image.open(io.BytesIO(img_bytes))
+                            ctk_img = ctk.CTkImage(light_image=imagem_pil, dark_image=imagem_pil, size=(600, 300))
+                            
+                            ctk.CTkLabel(self.frame_grafico, image=ctk_img, text="").pack()
+                            self.grafico_gerado = True
+                    except Exception as e:
+                        ctk.CTkLabel(self.frame_grafico, text=f"Erro na renderização: {e}", text_color="red").pack()
+                        self.grafico_gerado = True
+
+                if self.frame_grafico.winfo_ismapped():
+                    self.frame_grafico.pack_forget()
+                    btn_toggle.configure(text="Exibir Análise Gráfica ▼", state="normal")
+                else:
+                    self.frame_grafico.pack(pady=20, fill="x")
+                    btn_toggle.configure(text="Ocultar Análise Gráfica ▲", state="normal")
+
+            btn_toggle = ctk.CTkButton(self.main_frame, text="Exibir Análise Gráfica ▼", fg_color="transparent", border_width=1, command=toggle_grafico)
+            btn_toggle.pack(pady=20)
             
         elif tela_destino == "orcamento":
             titulo = ctk.CTkLabel(self.main_frame, text="Planejamento e Metas", font=ctk.CTkFont(size=24, weight="bold"))
             titulo.pack(pady=20, padx=20, anchor="w")
-            # Formulários de limite de gastos entrarão aqui
             
         elif tela_destino == "invest":
             titulo = ctk.CTkLabel(self.main_frame, text="Wealth Management & Ativos", font=ctk.CTkFont(size=24, weight="bold"))
             titulo.pack(pady=20, padx=20, anchor="w")
-            # Tabela de Marcação a Mercado entrará aqui
 
 if __name__ == "__main__":
     app = PlataformaFinanceira()
