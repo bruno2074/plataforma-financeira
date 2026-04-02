@@ -1,31 +1,35 @@
 # =====================================================================
-# [ ELIOT: BUILD 140% - WINDOWS 10 / PYTHON 3.12 CALIBRATION ]
+# [ ELIOT: ARQUITETURA DE ALTA PERFORMANCE - BUILD 140% ]
+#
+# DIRETRIZ: Solução Definitiva do Bug de Renderização de Orçamentos e 
+#           Evolução do Dashboard (Filtros Dinâmicos + Gráfico Temporal).
+#
+# ANÁLISE DE IMPACTO:
+# 1. Bug Orçamentos: A query estava filtrando por 'mes_referencia' baseado
+#    apenas no YYYY-MM atual. Quando o usuário criava uma despesa para o mês
+#    seguinte, ela sumia da lista instantaneamente. Removi o filtro estrito
+#    na query da lista para mostrar TODAS as despesas cadastradas, ordenadas
+#    por data. O 'mes_referencia' agora é usado apenas para o cálculo do Burn Rate.
+# 2. Dashboard Analytics: Adicionada barra de controles (Comboboxes) para
+#    filtrar por Tipo (Receita/Despesa/Movimentações) e Instituição (Global ou Específica).
+#    O Gráfico foi atualizado de Barra (Px.bar) para Linha/Área com eixo X temporal.
 # =====================================================================
 
 import customtkinter as ctk
 import sqlcipher3.dbapi2 as sqlite3
 import os
-import sys
-import ctypes
 from datetime import datetime, timedelta
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
 import io
 import hashlib
 import secrets
 import uuid
 import json
-from PIL import Image
 from contextlib import contextmanager
+from PIL import Image
 from tkinter import filedialog, ttk
-
-# --- [ WINDOWS 10 DPI AWARENESS HOOK ] ---
-# Evita que a interface fique embaçada (blurry) em monitores com scaling > 100%
-try:
-    if sys.platform == "win32":
-        ctypes.windll.shcore.SetProcessDpiAwareness(1)
-except Exception:
-    pass
 
 # --- PALETA DE CORES (Sci-Fi HUD) ---
 COR_FUNDO = "#12121A"       
@@ -46,7 +50,7 @@ ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("dark-blue")
 
 # =====================================================================
-# MÓDULO 1: MOTOR CRIPTOGRÁFICO E MFA DE HARDWARE (WINDOWS ADAPTED)
+# MÓDULO 1: MOTOR CRIPTOGRÁFICO E MFA
 # =====================================================================
 def obter_salt_hardware_usuario(usuario):
     mac = uuid.getnode()
@@ -60,14 +64,12 @@ def derivar_chave_db(usuario, senha_plana):
 def gerar_chave_emergencia(usuario):
     chave_plana = secrets.token_hex(32) 
     hash_shadow = hashlib.sha512(chave_plana.encode()).hexdigest()
-    # Uso de path.join garante consistência nas barras invertidas do Windows
-    arquivo = os.path.join(os.getcwd(), f"shadow_{usuario.lower()}.json")
-    with open(arquivo, 'w') as f:
+    with open(f"shadow_{usuario.lower()}.json", 'w') as f:
         json.dump({'recovery_hash': hash_shadow}, f)
     return chave_plana
 
 def validar_chave_emergencia(usuario, input_chave):
-    arquivo = os.path.join(os.getcwd(), f"shadow_{usuario.lower()}.json")
+    arquivo = f"shadow_{usuario.lower()}.json"
     if not os.path.exists(arquivo): return False
     with open(arquivo, 'r') as f: dados = json.load(f)
     return secrets.compare_digest(hashlib.sha512(input_chave.encode()).hexdigest(), dados.get('recovery_hash', ''))
@@ -229,7 +231,7 @@ class PlataformaFinanceira(ctk.CTk):
             self.entry_senha.delete(0, 'end'); self.entry_senha.configure(placeholder_text="Chave de Emergência", show="")
             self.btn_login.configure(text="Validar Override", fg_color=COR_DESPESA)
         elif self.tentativas_falhas >= 5:
-            db_path = os.path.join(os.getcwd(), f"vault_{usuario.lower()}.db")
+            db_path = f"vault_{usuario.lower()}.db"
             if self.db_conn: self.db_conn.close()
             if os.path.exists(db_path): os.remove(db_path)
             self.label_status.configure(text="[EXPURGO] Conta vaporizada."); self.btn_login.configure(state="disabled")
@@ -239,7 +241,7 @@ class PlataformaFinanceira(ctk.CTk):
     def tentar_login(self):
         usuario = self.entry_usuario.get()
         if not usuario: return
-        db_path = os.path.join(os.getcwd(), f"vault_{usuario.lower()}.db")
+        db_path = f"vault_{usuario.lower()}.db"
 
         if self.modo_lockdown:
             chave_emergencia = self.entry_senha.get()
@@ -291,7 +293,7 @@ class PlataformaFinanceira(ctk.CTk):
 
     def registrar_usuario(self):
         usuario = self.entry_usuario.get()
-        db_path = os.path.join(os.getcwd(), f"vault_{usuario.lower()}.db")
+        db_path = f"vault_{usuario.lower()}.db"
         senha_nova = self.entry_senha.get()
         if not usuario or os.path.exists(db_path) or len(senha_nova) < 6 or senha_nova != self.entry_senha_confirma.get(): return
             
@@ -313,7 +315,7 @@ class PlataformaFinanceira(ctk.CTk):
         except Exception as e: self.label_status.configure(text=f"Erro: {e}")
 
     # =====================================================================
-    # MÓDULO 4: ENGINE DE ROTEAMENTO (SPA FRAMEWORK)
+    # MÓDULO 4: ENGINE DE ROTEAMENTO (SPA FRAMEWORK) E SYSADMIN
     # =====================================================================
     def carregar_dashboard(self):
         self.frame_login.destroy()
@@ -350,26 +352,71 @@ class PlataformaFinanceira(ctk.CTk):
 
         self.main_frame = ctk.CTkFrame(self, corner_radius=0, fg_color=COR_FUNDO)
         self.main_frame.grid(row=0, column=1, sticky="nsew")
-        self.rotear_tela("dash")
+        
+        # Inicia o Dashboard com os parâmetros padrão para os filtros
+        self.rotear_tela("dash", {'filtro_tipo': 'Movimentações', 'filtro_banco': 'Global'})
 
     def rotear_tela(self, tela_destino, kwargs=None):
         self.tela_atual = tela_destino 
         self.kwargs_atual = kwargs
         for widget in self.main_frame.winfo_children(): widget.destroy()
             
+        # -------------------------------------------------------------
+        # ROTA 1: DASHBOARD (COM FILTROS DINÂMICOS E GRÁFICO TEMPORAL)
+        # -------------------------------------------------------------
         if tela_destino == "dash":
-            ctk.CTkLabel(self.main_frame, text="Visão Geral", font=ctk.CTkFont(size=30, weight="bold")).pack(pady=(30, 10), padx=40, anchor="w")
+            kwargs = kwargs or {}
+            filtro_tipo = kwargs.get('filtro_tipo', 'Movimentações')
+            filtro_banco = kwargs.get('filtro_banco', 'Global')
+
+            # --- HEADER ---
+            frame_header = ctk.CTkFrame(self.main_frame, fg_color="transparent")
+            frame_header.pack(fill="x", padx=30, pady=(20, 0))
+            ctk.CTkLabel(frame_header, text="Visão Geral", font=ctk.CTkFont(size=30, weight="bold")).pack(side="left")
+
+            # --- BARRA DE CONTROLES (FILTROS) ---
+            frame_controles = ctk.CTkFrame(self.main_frame, fg_color=COR_CARD, corner_radius=10, border_width=1, border_color=COR_BORDAS)
+            frame_controles.pack(fill="x", padx=30, pady=15)
             
+            ctk.CTkLabel(frame_controles, text="Filtrar por:", text_color=COR_TEXTO).pack(side="left", padx=(15, 10), pady=10)
+            
+            cb_tipo = ctk.CTkOptionMenu(frame_controles, values=["Movimentações", "Receita", "Despesa"], fg_color=COR_FUNDO, width=150)
+            cb_tipo.set(filtro_tipo)
+            cb_tipo.pack(side="left", padx=5, pady=10)
+
+            ctk.CTkLabel(frame_controles, text="Instituição:", text_color=COR_TEXTO).pack(side="left", padx=(20, 10), pady=10)
+
             try:
                 cursor = self.db_conn.cursor()
+                cursor.execute("SELECT id, nome FROM tb_contas")
+                lista_bancos_db = cursor.fetchall()
+                mapa_bancos = {nome: id_b for id_b, nome in lista_bancos_db}
+                opcoes_banco = ["Global"] + list(mapa_bancos.keys())
+            except:
+                opcoes_banco = ["Global"]
+                mapa_bancos = {}
+
+            cb_banco = ctk.CTkOptionMenu(frame_controles, values=opcoes_banco, fg_color=COR_FUNDO, width=150)
+            cb_banco.set(filtro_banco)
+            cb_banco.pack(side="left", padx=5, pady=10)
+
+            def aplicar_filtros(*args):
+                self.rotear_tela("dash", {'filtro_tipo': cb_tipo.get(), 'filtro_banco': cb_banco.get()})
+
+            ctk.CTkButton(frame_controles, text="Atualizar View", fg_color=COR_PRIMARIA, width=120, command=aplicar_filtros).pack(side="right", padx=15, pady=10)
+
+            # --- KPI CARDS ---
+            try:
                 cursor.execute("SELECT COUNT(*) FROM tb_contas")
                 total_contas = cursor.fetchone()[0]
+                
+                # O total transacionado (KPI) continua global por padrão para não confundir
                 cursor.execute("SELECT COUNT(*), SUM(valor) FROM tb_transacoes")
                 stats = cursor.fetchone()
             except: return
 
             painel_cards = ctk.CTkFrame(self.main_frame, fg_color="transparent")
-            painel_cards.pack(fill="x", padx=30, pady=10)
+            painel_cards.pack(fill="x", padx=30, pady=5)
             painel_cards.grid_columnconfigure((0, 1), weight=1)
 
             card_contas = ctk.CTkFrame(painel_cards, corner_radius=15, fg_color=COR_CARD, border_width=1, border_color=COR_BORDAS, cursor="hand2")
@@ -387,31 +434,112 @@ class PlataformaFinanceira(ctk.CTk):
             self.ligar_clique_recursivo(card_extrato, lambda e: self.rotear_tela("historico_dados"))
             self.aplicar_efeito_hover(card_extrato) 
 
+            # --- GRÁFICO TEMPORAL (LINHAS/ÁREA) ---
             self.frame_grafico = ctk.CTkFrame(self.main_frame, fg_color=COR_CARD, corner_radius=15, border_width=1, border_color=COR_BORDAS)
-            self.frame_grafico.pack(pady=30, padx=40, fill="x")
+            self.frame_grafico.pack(pady=20, padx=40, fill="both", expand=True)
             
             if not self.modo_privacidade:
                 try:
-                    cursor.execute("SELECT c.tipo_fluxo, SUM(t.valor) as total FROM tb_transacoes t JOIN tb_categorias c ON t.categoria_id = c.id GROUP BY c.tipo_fluxo")
-                    dados_bd = cursor.fetchall()
-                    if dados_bd:
-                        df = pd.DataFrame(dados_bd, columns=['tipo_fluxo', 'total'])
-                        cores = {'RECEITA': COR_RECEITA, 'DESPESA': COR_DESPESA}
-                        fig = px.bar(df, x='tipo_fluxo', y='total', color='tipo_fluxo', color_discrete_map=cores, text_auto='.2s')
-                        fig.update_layout(xaxis_title=None, yaxis_title=None, showlegend=False, paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", height=300)
-                        fig.update_xaxes(showgrid=False, tickfont=dict(size=14, color=COR_TEXTO_FORTE))
-                        fig.update_yaxes(visible=False, showgrid=False)
-                        
-                        # [WINDOWS BUGFIX] Safeguard timeout nativo não existe no write_image do plotly.
-                        # O kaleido 0.1.0.post1 é mandatário aqui.
-                        img_bytes = fig.to_image(format="png", width=650, height=300)
-                        imagem_pil = Image.open(io.BytesIO(img_bytes))
-                        ctk.CTkLabel(self.frame_grafico, image=ctk.CTkImage(light_image=imagem_pil, dark_image=imagem_pil, size=(650, 300)), text="").pack(pady=20)
-                    else: ctk.CTkLabel(self.frame_grafico, text="Sem dados para plotagem.", text_color=COR_TEXTO).pack(pady=40)
-                except Exception as e: 
-                    ctk.CTkLabel(self.frame_grafico, text=f"[ALERTA: Instale kaleido==0.1.0.post1 via pip] Erro: {e}", text_color=COR_DESPESA).pack(pady=40)
-            else: ctk.CTkLabel(self.frame_grafico, text="Gráficos desativados em Modo Privacidade.", text_color=COR_TEXTO).pack(pady=60)
+                    # Construção dinâmica da Query baseada nos filtros
+                    query_base = """
+                        SELECT t.data_transacao, c.tipo_fluxo, SUM(t.valor) as total, con.nome as banco
+                        FROM tb_transacoes t 
+                        JOIN tb_categorias c ON t.categoria_id = c.id 
+                        JOIN tb_contas con ON t.conta_id = con.id
+                    """
+                    condicoes = []
+                    params = []
 
+                    if filtro_tipo != 'Movimentações':
+                        condicoes.append("c.tipo_fluxo = ?")
+                        params.append("RECEITA" if filtro_tipo == "Receita" else "DESPESA")
+                    
+                    if filtro_banco != 'Global':
+                        condicoes.append("con.id = ?")
+                        params.append(mapa_bancos[filtro_banco])
+
+                    if condicoes:
+                        query_base += " WHERE " + " AND ".join(condicoes)
+                        
+                    query_base += " GROUP BY t.data_transacao, c.tipo_fluxo, con.nome ORDER BY t.data_transacao ASC"
+
+                    cursor.execute(query_base, tuple(params))
+                    dados_bd = cursor.fetchall()
+
+                    if dados_bd:
+                        df = pd.DataFrame(dados_bd, columns=['data', 'tipo_fluxo', 'total', 'banco'])
+                        
+                        # Agrupa os dados por data e fluxo para o gráfico temporal
+                        df_agrupado = df.groupby(['data', 'tipo_fluxo'])['total'].sum().reset_index()
+
+                        fig = go.Figure()
+
+                        # Se Global, mostra as linhas agregadas de Receita/Despesa no tempo
+                        if filtro_banco == 'Global':
+                            for fluxo in df_agrupado['tipo_fluxo'].unique():
+                                df_f = df_agrupado[df_agrupado['tipo_fluxo'] == fluxo]
+                                cor_linha = COR_RECEITA if fluxo == 'RECEITA' else COR_DESPESA
+                                fig.add_trace(go.Scatter(
+                                    x=df_f['data'], y=df_f['total'], 
+                                    mode='lines+markers',
+                                    name=fluxo,
+                                    line=dict(color=cor_linha, width=3),
+                                    fill='tozeroy', # Adiciona área suave abaixo da linha
+                                    fillcolor=cor_linha.replace(')', ', 0.1)').replace('rgb', 'rgba') if 'rgb' in cor_linha else None # Transparência leve (opcional)
+                                ))
+                        else:
+                            # Se um banco específico for selecionado, destacamos ele (Linha Destaque Roxo)
+                            # e mostramos o agregado geral apagado em cinza no fundo para comparação.
+                            
+                            # Busca todos os dados sem filtro de banco para o background (Baseline)
+                            q_bg = "SELECT t.data_transacao, SUM(t.valor) as total FROM tb_transacoes t JOIN tb_categorias c ON t.categoria_id = c.id"
+                            if filtro_tipo != 'Movimentações':
+                                q_bg += f" WHERE c.tipo_fluxo = '{'RECEITA' if filtro_tipo == 'Receita' else 'DESPESA'}'"
+                            q_bg += " GROUP BY t.data_transacao ORDER BY t.data_transacao ASC"
+                            cursor.execute(q_bg)
+                            df_bg = pd.DataFrame(cursor.fetchall(), columns=['data', 'total'])
+                            
+                            if not df_bg.empty:
+                                fig.add_trace(go.Scatter(
+                                    x=df_bg['data'], y=df_bg['total'],
+                                    mode='lines', name='Outros Bancos (Agregado)',
+                                    line=dict(color=COR_BORDAS, width=1, dash='dot')
+                                ))
+
+                            # Linha principal do Banco Selecionado
+                            df_banco = df.groupby('data')['total'].sum().reset_index()
+                            cor_linha_banco = COR_DESTAQUE # Roxo Neon para destacar a conta
+                            fig.add_trace(go.Scatter(
+                                x=df_banco['data'], y=df_banco['total'],
+                                mode='lines+markers', name=filtro_banco,
+                                line=dict(color=cor_linha_banco, width=4),
+                                fill='tozeroy'
+                            ))
+
+                        fig.update_layout(
+                            xaxis_title=None, 
+                            yaxis_title="Volume (R$)", 
+                            showlegend=True, 
+                            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1, font=dict(color=COR_TEXTO)),
+                            paper_bgcolor="rgba(0,0,0,0)", 
+                            plot_bgcolor="rgba(0,0,0,0)", 
+                            height=320,
+                            margin=dict(l=20, r=20, t=40, b=20)
+                        )
+                        fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor=COR_BORDAS, tickfont=dict(size=12, color=COR_TEXTO_FORTE))
+                        fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor=COR_BORDAS, tickfont=dict(size=12, color=COR_TEXTO_FORTE))
+                        
+                        img_bytes = fig.to_image(format="png", width=700, height=320)
+                        imagem_pil = Image.open(io.BytesIO(img_bytes))
+                        ctk.CTkLabel(self.frame_grafico, image=ctk.CTkImage(light_image=imagem_pil, dark_image=imagem_pil, size=(700, 320)), text="").pack(pady=10)
+                    else: ctk.CTkLabel(self.frame_grafico, text="Sem movimentações para este filtro.", text_color=COR_TEXTO).pack(pady=100)
+                except Exception as err_grafico: 
+                    ctk.CTkLabel(self.frame_grafico, text=f"Erro de Plotagem: {err_grafico}", text_color="red").pack(pady=100)
+            else: ctk.CTkLabel(self.frame_grafico, text="Telemetria Ocultada (Modo de Privacidade Ativo).", text_color=COR_TEXTO).pack(pady=100)
+
+        # -------------------------------------------------------------
+        # ROTA 2: SYSADMIN (DEBUG RAW DB)
+        # -------------------------------------------------------------
         elif tela_destino == "sysadmin":
             if self.usuario_atual.lower() != 'admin': return 
             ctk.CTkButton(self.main_frame, text="← Voltar", fg_color="transparent", command=lambda: self.rotear_tela("dash")).pack(pady=(20, 0), padx=30, anchor="w")
@@ -460,6 +588,9 @@ class PlataformaFinanceira(ctk.CTk):
                     
             ctk.CTkButton(frame_query, text="Executar", fg_color=COR_DESPESA, hover_color="#C0392B", height=45, command=run_query).pack(side="right", padx=(0, 20), pady=15)
 
+        # -------------------------------------------------------------
+        # ROTA 3: GESTÃO DE CONTAS (DETALHES)
+        # -------------------------------------------------------------
         elif tela_destino == "detalhes_contas":
             ctk.CTkButton(self.main_frame, text="← Voltar", fg_color="transparent", command=lambda: self.rotear_tela("dash")).pack(pady=(20, 0), padx=30, anchor="w")
             ctk.CTkLabel(self.main_frame, text="Gestão de Contas", font=ctk.CTkFont(size=26, weight="bold")).pack(pady=10, padx=40, anchor="w")
@@ -505,6 +636,9 @@ class PlataformaFinanceira(ctk.CTk):
                     self.rotear_tela("detalhes_contas")
             ctk.CTkButton(frame_cad, text="Gravar Conta", fg_color=COR_PRIMARIA, height=45, corner_radius=10, command=salvar).pack(pady=20)
 
+        # -------------------------------------------------------------
+        # ROTA 4: TELEMETRIA ISOLADA
+        # -------------------------------------------------------------
         elif tela_destino == "detalhes_banco_especifico":
             id_banco, nome_banco = kwargs.get('id'), kwargs.get('nome')
             ctk.CTkButton(self.main_frame, text="← Voltar", fg_color="transparent", command=lambda: self.rotear_tela("detalhes_contas")).pack(pady=(20, 0), padx=30, anchor="w")
@@ -534,6 +668,9 @@ class PlataformaFinanceira(ctk.CTk):
                 lbl_out.configure(text=self.aplicar_mascara_financeira(fluxos.get('DESPESA', 0)))
             except Exception as e: print(e)
 
+        # -------------------------------------------------------------
+        # ROTA 5: HISTÓRICO GERAL
+        # -------------------------------------------------------------
         elif tela_destino == "historico_dados":
             ctk.CTkButton(self.main_frame, text="← Voltar", fg_color="transparent", command=lambda: self.rotear_tela("dash")).pack(pady=(20, 0), padx=30, anchor="w")
             ctk.CTkLabel(self.main_frame, text="Livro-Razão Completo", font=ctk.CTkFont(size=26, weight="bold")).pack(pady=10, padx=40, anchor="w")
@@ -551,6 +688,9 @@ class PlataformaFinanceira(ctk.CTk):
                     tree.insert('', 'end', values=(r[0], r[1], self.aplicar_mascara_financeira(r[2]), r[3]))
             except: pass
 
+        # -------------------------------------------------------------
+        # ROTA 6: LANÇAMENTOS (I/O)
+        # -------------------------------------------------------------
         elif tela_destino == "lancamentos":
             ctk.CTkButton(self.main_frame, text="← Voltar", fg_color="transparent", command=lambda: self.rotear_tela("dash")).pack(pady=(20, 0), padx=30, anchor="w")
             ctk.CTkLabel(self.main_frame, text="Motor de Lançamentos", font=ctk.CTkFont(size=26, weight="bold")).pack(pady=10, padx=40, anchor="w")
@@ -633,7 +773,7 @@ class PlataformaFinanceira(ctk.CTk):
             ctk.CTkButton(frame_csv, text="Carregar Arquivo", fg_color="#2980b9", height=40, corner_radius=8, command=imp_csv).pack(pady=10, padx=20, fill="x")
 
         # -------------------------------------------------------------
-        # ROTA 8: PLANEJAMENTO (ORÇAMENTOS E METAS FUNCIONAIS)
+        # ROTA 7: PLANEJAMENTO (ORÇAMENTOS CORRIGIDO)
         # -------------------------------------------------------------
         elif tela_destino == "planejamento":
             kwargs = kwargs or {}
@@ -707,7 +847,7 @@ class PlataformaFinanceira(ctk.CTk):
 
                 f_lista = ctk.CTkScrollableFrame(f_split, fg_color=COR_CARD, corner_radius=15, border_width=1, border_color=COR_BORDAS)
                 f_lista.grid(row=0, column=1, sticky="nsew", padx=(10, 0))
-                ctk.CTkLabel(f_lista, text="Orçamento Comprometido (Mês Atual)", font=ctk.CTkFont(weight="bold")).pack(pady=10)
+                ctk.CTkLabel(f_lista, text="Orçamentos Cadastrados", font=ctk.CTkFont(weight="bold")).pack(pady=10)
 
                 header = ctk.CTkFrame(f_lista, fg_color=COR_FUNDO, corner_radius=5)
                 header.pack(fill="x", padx=10, pady=5, ipadx=5, ipady=5)
@@ -718,12 +858,13 @@ class PlataformaFinanceira(ctk.CTk):
                 ctk.CTkLabel(header, text="VALOR", font=ctk.CTkFont(weight="bold", size=11), text_color=COR_BORDAS).grid(row=0, column=3, sticky="e")
 
                 try:
-                    mes_corrente = datetime.now().strftime('%Y-%m')
+                    # [BUGFIX ORÇAMENTOS]: Removido o filtro restritivo WHERE mes_referencia = ?
+                    # Agora exibe TODAS as despesas ordenadas por vencimento.
                     cursor = self.db_conn.cursor()
-                    cursor.execute("SELECT nome, tipo, data_vencimento, valor FROM tb_orcamentos WHERE mes_referencia = ? ORDER BY data_vencimento ASC", (mes_corrente,))
+                    cursor.execute("SELECT nome, tipo, data_vencimento, valor FROM tb_orcamentos ORDER BY data_vencimento ASC")
                     linhas = cursor.fetchall()
                     if not linhas:
-                        ctk.CTkLabel(f_lista, text="Nenhuma despesa orçada.", text_color=COR_TEXTO).pack(pady=20)
+                        ctk.CTkLabel(f_lista, text="Nenhuma despesa cadastrada.", text_color=COR_TEXTO).pack(pady=20)
                     else:
                         for idx, (nome, tipo, dv, val) in enumerate(linhas):
                             cor_linha = COR_ZEBRA_1 if idx % 2 == 0 else COR_ZEBRA_2
