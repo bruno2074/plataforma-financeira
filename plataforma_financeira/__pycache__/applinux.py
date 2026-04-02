@@ -1,3 +1,4 @@
+# - Bibliotecas mais antigas, incompatível com windows
 import customtkinter as ctk
 import sqlcipher3.dbapi2 as sqlite3
 import os
